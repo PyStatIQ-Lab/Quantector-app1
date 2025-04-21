@@ -42,22 +42,45 @@ class HybridClassifier(nn.Module):
 @st.cache_data
 def fetch_stock_data(symbol):
     df = yf.download(symbol, period='6mo')
-    df['Return'] = df['Close'].pct_change()
-    df['Volume_Change'] = df['Volume'].pct_change()
-    df['7D_Return'] = df['Close'].pct_change(7)
+    
+    # Calculate percentage changes with error handling
+    df['Return'] = df['Close'].pct_change().replace([np.inf, -np.inf], np.nan)
+    df['Volume_Change'] = df['Volume'].pct_change().replace([np.inf, -np.inf], np.nan)
+    df['7D_Return'] = df['Close'].pct_change(7).replace([np.inf, -np.inf], np.nan)
+    
+    # Drop rows with NA values
     df = df.dropna()
+    
+    # Clip extreme values to prevent overflow
+    for col in ['Return', 'Volume_Change', '7D_Return']:
+        df[col] = df[col].clip(lower=-1, upper=1)  # Clipping to ±100% change
+    
     return df
 
 def analyze_stock(symbol):
     try:
         df = fetch_stock_data(symbol)
+        if df.empty:
+            st.warning(f"No valid data for {symbol}")
+            return None
+            
         df['Date'] = df.index.date
 
         # Prepare features for quantum model
         features = ['Return', 'Volume_Change', '7D_Return']
-        X = df[features].fillna(0).values
-        X = StandardScaler().fit_transform(X)
-        X_torch = torch.tensor(X, dtype=torch.float32)
+        X = df[features].values
+        
+        # Additional check for infinite values
+        if not np.isfinite(X).all():
+            st.warning(f"Non-finite values detected in {symbol}, cleaning data...")
+            X = np.nan_to_num(X, nan=0, posinf=1, neginf=-1)  # Replace any remaining inf/nan
+            
+        # Scale features
+        scaler = StandardScaler()
+        X_scaled = scaler.fit_transform(X)
+        
+        # Convert to tensor
+        X_torch = torch.tensor(X_scaled, dtype=torch.float32)
 
         # Initialize and run quantum model
         model = HybridClassifier()
