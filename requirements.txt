@@ -8,3 +8,4 @@ requests
 transformers
 openpyxl
 pennylane
+xlsxwriter
