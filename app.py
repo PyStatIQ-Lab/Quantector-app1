@@ -97,6 +97,12 @@ def analyze_stock(symbol):
         df['7D_Return'] = df['Close'].pct_change(7).fillna(0)
 
         features = ['Return', 'Volume_Change', '7D_Return', 'pos']
+        df[features] = df[features].replace([np.inf, -np.inf], np.nan)
+        df = df.dropna(subset=features)
+
+        if df.empty:
+            return None
+
         X = df[features].values
         X = StandardScaler().fit_transform(X)
         X_torch = torch.tensor(X, dtype=torch.float32)
@@ -104,13 +110,15 @@ def analyze_stock(symbol):
         model = HybridClassifier()
         with torch.no_grad():
             preds = model(X_torch).numpy().flatten()
-            df['Quantum_Anomaly'] = (preds > 0.5).astype(int)
+            df['Quantum_Anomaly'] = 0
+            df.loc[df.index[-len(preds):], 'Quantum_Anomaly'] = (preds > 0.5).astype(int)
 
         return df[['Date', 'Close', 'Quantum_Anomaly']]
     
     except Exception as e:
         st.warning(f"❌ Error analyzing {symbol}: {e}")
         return None
+
 
 # ---------- STREAMLIT UI ----------
 st.set_page_config(page_title="Quantector", layout="wide")
