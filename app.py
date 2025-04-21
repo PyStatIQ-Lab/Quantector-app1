@@ -170,7 +170,7 @@ try:
             
             # Show all results with expander
             with st.expander("View All Results"):
-                st.dataframe(combined_df.sort_values(['Symbol', 'TradeDate'])
+                st.dataframe(combined_df.sort_values(['Symbol', 'TradeDate']))
             
             # Download button
             st.subheader("📥 Download Results")
