@@ -6,6 +6,7 @@ import torch
 import pennylane as qml
 from torch import nn
 from sklearn.preprocessing import StandardScaler
+from io import BytesIO
 
 # ----------- QUANTUM MODEL -----------
 n_qubits = 4
@@ -65,6 +66,7 @@ def analyze_stock(symbol):
             return None
             
         df['Date'] = df.index.date
+        df['Symbol'] = symbol  # Add symbol column for reference
 
         # Prepare features for quantum model
         features = ['Return', 'Volume_Change', '7D_Return']
@@ -86,9 +88,10 @@ def analyze_stock(symbol):
         model = HybridClassifier()
         with torch.no_grad():
             preds = model(X_torch).numpy().flatten()
-            df['Quantum_Anomaly'] = (preds > 0.5).astype(int)
+            df['Quantum_Anomaly'] = preds  # Store raw probability
+            df['Anomaly_Flag'] = (preds > 0.5).astype(int)  # Binary flag
 
-        return df[['Date', 'Close', 'Quantum_Anomaly']]
+        return df[['Symbol', 'Date', 'Close', 'Quantum_Anomaly', 'Anomaly_Flag']]
     except Exception as e:
         st.error(f"Error analyzing {symbol}: {str(e)}")
         return None
@@ -96,6 +99,14 @@ def analyze_stock(symbol):
 # ----------- STREAMLIT UI -----------
 st.set_page_config(page_title="Quantector", layout="wide")
 st.title("🧠 Quantector – Quantum-enhanced Stock Anomaly Detector")
+
+def to_excel(df):
+    output = BytesIO()
+    writer = pd.ExcelWriter(output, engine='xlsxwriter')
+    df.to_excel(writer, index=False, sheet_name='Anomaly_Results')
+    writer.close()
+    processed_data = output.getvalue()
+    return processed_data
 
 # Main analysis function
 def run_analysis(selected_sheet):
@@ -107,7 +118,7 @@ def run_analysis(selected_sheet):
             return
 
         symbols = stock_df['Symbol'].tolist()
-        results = []
+        all_results = []
         progress_bar = st.progress(0)
         status_text = st.empty()
 
@@ -115,24 +126,25 @@ def run_analysis(selected_sheet):
             status_text.text(f"🔍 Analyzing {symbol} ({i+1}/{len(symbols)})...")
             result = analyze_stock(symbol)
             if result is not None:
-                results.append((symbol, result))
+                all_results.append(result)
             progress_bar.progress((i + 1) / len(symbols))
 
-        if not results:
+        if not all_results:
             st.warning("No valid stock data could be fetched. Please try again later.")
-        else:
-            for symbol, df in results:
-                st.subheader(f"📈 {symbol}")
-                col1, col2 = st.columns(2)
-                with col1:
-                    st.markdown("**Price Movement**")
-                    st.line_chart(df.set_index('Date')['Close'])
-                with col2:
-                    st.markdown("**Anomaly Detection**")
-                    st.bar_chart(df.set_index('Date')['Quantum_Anomaly'])
+            return None, None
+        
+        # Combine all results
+        combined_df = pd.concat(all_results)
+        
+        # Find top anomalies
+        top_anomalies = combined_df[combined_df['Anomaly_Flag'] == 1].sort_values(
+            'Quantum_Anomaly', ascending=False).head(10)
+        
+        return combined_df, top_anomalies
 
     except Exception as e:
         st.error(f"Error analyzing stocks: {str(e)}")
+        return None, None
 
 # Load Excel and sheet list
 try:
@@ -144,7 +156,28 @@ try:
     analyze_button = st.button("Analyze Stocks")
 
     if analyze_button:
-        run_analysis(selected_sheet)
+        combined_df, top_anomalies = run_analysis(selected_sheet)
+        
+        if combined_df is not None:
+            # Show top anomalies
+            st.subheader("🚨 Top 10 Anomalies Detected")
+            st.dataframe(top_anomalies[['Symbol', 'Date', 'Close', 'Quantum_Anomaly']]
+                        .rename(columns={'Quantum_Anomaly': 'Anomaly Score'})
+                        .style.format({'Anomaly Score': '{:.3f}'}))
+            
+            # Show all results with expander
+            with st.expander("View All Results"):
+                st.dataframe(combined_df.sort_values(['Symbol', 'Date']))
+            
+            # Download button
+            st.subheader("📥 Download Results")
+            excel_data = to_excel(combined_df)
+            st.download_button(
+                label="Download Excel File",
+                data=excel_data,
+                file_name="quantum_anomaly_results.xlsx",
+                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+            )
 
 except FileNotFoundError:
     st.error("⚠️ File 'stocklist.xlsx' not found. Please ensure it's in the same directory.")
@@ -163,6 +196,10 @@ with st.expander("About this App"):
     2. Calculates daily returns, volume changes, and 7-day returns
     3. Processes the data through a quantum neural network
     4. Flags potential anomalies (values > 0.5)
+    
+    **Results Interpretation:**
+    - Anomaly Score: Probability between 0-1 (higher = more anomalous)
+    - Anomaly Flag: 1 if score > 0.5, 0 otherwise
     
     **Requirements:**
     - An Excel file named 'stocklist.xlsx' with sheets containing 'Symbol' columns
