@@ -56,6 +56,10 @@ def fetch_stock_data(symbol):
     for col in ['Return', 'Volume_Change', '7D_Return']:
         df[col] = df[col].clip(lower=-1, upper=1)  # Clipping to ±100% change
     
+    # Reset index and rename date column
+    df = df.reset_index()
+    df = df.rename(columns={'Date': 'TradeDate'})  # Avoid conflict with index
+    
     return df
 
 def analyze_stock(symbol):
@@ -65,7 +69,6 @@ def analyze_stock(symbol):
             st.warning(f"No valid data for {symbol}")
             return None
             
-        df['Date'] = df.index.date
         df['Symbol'] = symbol  # Add symbol column for reference
 
         # Prepare features for quantum model
@@ -91,7 +94,7 @@ def analyze_stock(symbol):
             df['Quantum_Anomaly'] = preds  # Store raw probability
             df['Anomaly_Flag'] = (preds > 0.5).astype(int)  # Binary flag
 
-        return df[['Symbol', 'Date', 'Close', 'Quantum_Anomaly', 'Anomaly_Flag']]
+        return df[['Symbol', 'TradeDate', 'Close', 'Quantum_Anomaly', 'Anomaly_Flag']]
     except Exception as e:
         st.error(f"Error analyzing {symbol}: {str(e)}")
         return None
@@ -102,11 +105,9 @@ st.title("🧠 Quantector – Quantum-enhanced Stock Anomaly Detector")
 
 def to_excel(df):
     output = BytesIO()
-    writer = pd.ExcelWriter(output, engine='xlsxwriter')
-    df.to_excel(writer, index=False, sheet_name='Anomaly_Results')
-    writer.close()
-    processed_data = output.getvalue()
-    return processed_data
+    with pd.ExcelWriter(output, engine='xlsxwriter') as writer:
+        df.to_excel(writer, index=False, sheet_name='Anomaly_Results')
+    return output.getvalue()
 
 # Main analysis function
 def run_analysis(selected_sheet):
@@ -115,7 +116,7 @@ def run_analysis(selected_sheet):
 
         if 'Symbol' not in stock_df.columns:
             st.error("Error: The selected sheet doesn't have a 'Symbol' column.")
-            return
+            return None, None
 
         symbols = stock_df['Symbol'].tolist()
         all_results = []
@@ -161,17 +162,19 @@ try:
         if combined_df is not None:
             # Show top anomalies
             st.subheader("🚨 Top 10 Anomalies Detected")
-            st.dataframe(top_anomalies[['Symbol', 'Date', 'Close', 'Quantum_Anomaly']]
-                        .rename(columns={'Quantum_Anomaly': 'Anomaly Score'})
-                        .style.format({'Anomaly Score': '{:.3f}'}))
+            st.dataframe(top_anomalies[['Symbol', 'TradeDate', 'Close', 'Quantum_Anomaly']]
+                        .rename(columns={
+                            'Quantum_Anomaly': 'Anomaly Score',
+                            'TradeDate': 'Date'
+                        }).style.format({'Anomaly Score': '{:.3f}'}))
             
             # Show all results with expander
             with st.expander("View All Results"):
-                st.dataframe(combined_df.sort_values(['Symbol', 'Date']))
+                st.dataframe(combined_df.sort_values(['Symbol', 'TradeDate'])
             
             # Download button
             st.subheader("📥 Download Results")
-            excel_data = to_excel(combined_df)
+            excel_data = to_excel(combined_df.rename(columns={'TradeDate': 'Date'}))
             st.download_button(
                 label="Download Excel File",
                 data=excel_data,
